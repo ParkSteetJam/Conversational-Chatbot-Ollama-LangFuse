@@ -1,9 +1,9 @@
-# Conversational Chatbot — LangChain + Ollama + LangSmith
+# Conversational Chatbot — LangChain + Ollama + Langfuse
 
 A minimal command-line chatbot that talks to a local Ollama model through
-LangChain, remembers earlier turns in the conversation, and has every call
-traced in LangSmith. This project exists to **learn** LangChain and
-LangSmith fundamentals, so this README explains every concept used — assume
+LangChain, remembers earlier turns in the conversation, and traces every
+message in Langfuse. This project exists to **learn** LangChain and Langfuse
+fundamentals, so this README explains every concept used — assume
 nothing, look nothing up elsewhere to get started.
 
 ## 1. What this project is
@@ -11,9 +11,9 @@ nothing, look nothing up elsewhere to get started.
 `chatbot.py` is a single Python script that runs a REPL (read-eval-print
 loop) in your terminal: you type a message, it's sent to a local Gemma
 model running under Ollama, and the reply is printed back. The bot
-remembers everything said earlier in the same run, and every exchange is
-recorded as a trace in LangSmith so you can see exactly what was sent to
-the model and when.
+remembers everything said earlier in the same run. Every exchange is
+recorded as a Langfuse trace so you can inspect what was sent to the model
+and when.
 
 ## 2. What is LangChain?
 
@@ -90,14 +90,19 @@ ollama pull gemma4:e4b
 The tag is read from the `OLLAMA_MODEL` environment variable (see §7), so
 if a different tag is ever needed, change it in `.env` — never in the code.
 
-## 6. What is LangSmith, and what does a trace capture?
+## 6. What is Langfuse, and what does a trace capture?
 
-**LangSmith** is LangChain's observability/tracing platform. Once tracing
-is turned on (via environment variables — see §7), **every `invoke()` call
-on a LangChain runnable is automatically recorded** as a "run" in LangSmith,
-with no extra code required anywhere in `chatbot.py`.
+**Langfuse** is an observability platform for tracing and analyzing LLM
+applications. Its Python SDK provides a callback handler for LangChain.
+`chatbot.py` configures the handler on each chatbot invocation; setting
+environment variables alone does not enable tracing.
 
-Each run captures:
+Create a Langfuse project and add its API keys to `.env` as described in §7.
+`chatbot.py` creates the Langfuse callback handler and passes it to each
+LangChain invocation. Each user turn creates its own named trace, and the
+conversation's session ID groups those traces together.
+
+Each trace captures:
 
 - The exact input and output of that step.
 - Latency and (where the model reports it) token counts.
@@ -119,16 +124,14 @@ Set in `.env` (copy `.env.example` to `.env` and fill in real values — see
 | Variable | Purpose |
 |---|---|
 | `OLLAMA_MODEL` | The exact Ollama model tag to use, e.g. `gemma4:e4b`. Read by `chatbot.py` directly. |
-| `LANGCHAIN_TRACING_V2` | Set to `true` to turn on LangSmith tracing. Read automatically by LangChain — no code needed. |
-| `LANGCHAIN_API_KEY` | Your LangSmith API key, from smith.langchain.com → Settings → API Keys. |
-| `LANGCHAIN_PROJECT` | Groups traces under a named project in the LangSmith UI instead of `default`. |
-| `LANGCHAIN_ENDPOINT` *(optional)* | Only needed for EU-region or self-hosted LangSmith orgs. Standard US accounts default to `https://api.smith.langchain.com` and can omit this. If you need it, your LangSmith "API Keys" page shows the exact value. |
+| `LANGFUSE_PUBLIC_KEY` | Your Langfuse project's public key. |
+| `LANGFUSE_SECRET_KEY` | Your Langfuse project's secret key. Keep it private; do not commit it. |
+| `LANGFUSE_BASE_URL` | The URL for your Langfuse region or self-hosted instance. The example uses `https://cloud.langfuse.com`. |
 
-Note: newer LangChain/LangSmith SDKs also accept `LANGSMITH_*` names
-(`LANGSMITH_TRACING`, `LANGSMITH_API_KEY`, `LANGSMITH_PROJECT`) as aliases.
-This project sticks to the longer-established `LANGCHAIN_*` names. Don't
-set both forms inconsistently (e.g. `true` in one and `false` in the
-other) — pick one family and use it everywhere.
+The app exits with a configuration error if either API key is missing.
+Langfuse records prompts and replies, including prior conversation turns;
+do not send sensitive information unless your Langfuse project is approved
+to store it.
 
 ## 8. Setup instructions
 
@@ -146,10 +149,14 @@ python -m venv venv
 # 3. Install dependencies
 pip install -r requirements.txt
 
-# 4. Create your real .env from the template and fill in your LangSmith API key
-copy .env.example .env
+# 4. Preserve an existing .env; create it from the template only if needed
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 notepad .env
 ```
+
+Set `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` to your project keys,
+and use the correct `LANGFUSE_BASE_URL` for your region or self-hosted
+instance.
 
 If step 1 shows a different tag than `gemma4:e4b`, update `OLLAMA_MODEL` in
 `.env` to match — don't edit `chatbot.py`.
@@ -175,12 +182,11 @@ The second answer only works because `RunnableWithMessageHistory` resent
 the first exchange as part of the second request — that's "memory" in
 action.
 
-## 10. Verifying LangSmith traces
+## 10. Verifying Langfuse traces
 
-1. Go to [smith.langchain.com](https://smith.langchain.com).
-2. Open the `conversational-chatbot-ollama-langsmith` project (matches
-   `LANGCHAIN_PROJECT`).
-3. You should see one trace per message you sent.
+1. Open your Langfuse project in the Langfuse UI.
+2. Set the Langfuse API keys in `.env` as described in §7, then start `chatbot.py`.
+3. Send a few messages; you should see a trace for each invocation.
 4. Click into a trace (ideally the second message onward) and expand the
    model-call span — confirm you can see the full message list, including
    the earlier turn, being sent to the model.
@@ -190,8 +196,8 @@ action.
 ```powershell
 git init
 git status   # confirm .env and venv/ are NOT listed (they're gitignored)
-git add .gitignore requirements.txt .env.example chatbot.py README.md
-git commit -m "Initial conversational chatbot with Ollama + LangChain + LangSmith tracing"
+git add .gitignore .agents/skills/langfuse skills-lock.json requirements.txt .env.example chatbot.py README.md
+git commit -m "Initial conversational chatbot with Ollama + LangChain + Langfuse tracing"
 ```
 
 ## 12. What to learn next

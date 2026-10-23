@@ -1,4 +1,5 @@
 langchain-core
 langchain-ollama
-langsmith
+langfuse
+pydantic
 python-dotenv

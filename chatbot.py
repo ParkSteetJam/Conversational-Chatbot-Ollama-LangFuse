@@ -5,12 +5,13 @@ Flow: load config from .env -> build a ChatOllama model -> wrap it in a
 prompt template ("chain") -> wrap the chain in RunnableWithMessageHistory so
 prior turns are replayed into the prompt on every call -> run a REPL loop.
 
-Tracing: LangSmith tracing is turned on purely by the LANGCHAIN_* env vars
-below; no LangSmith code is called directly anywhere in this file.
+Tracing: Langfuse captures each LangChain invocation through its callback
+integration. Configure Langfuse credentials in .env before starting the app.
 See README.md for a full explanation of every concept used here.
 """
 
 import os
+import uuid
 
 from dotenv import load_dotenv  # loads variables from .env into os.environ
 from langchain_core.chat_history import InMemoryChatMessageHistory  # in-RAM store for one conversation's messages
@@ -23,10 +24,6 @@ load_dotenv()
 # Single source of truth for which Ollama model tag to use. Change it in
 # .env, not here, if the tag ever needs correcting.
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "gemma4:e4b")
-
-# The LANGCHAIN_TRACING_V2 / LANGCHAIN_API_KEY / LANGCHAIN_PROJECT vars from
-# .env are read automatically by LangChain's own tracing callback once
-# load_dotenv() has populated os.environ -- no tracing code needed here.
 
 # Talks to the local Ollama server (default http://localhost:11434).
 # No API key needed: the model is running on this machine, not a cloud API.
@@ -71,18 +68,53 @@ chatbot = RunnableWithMessageHistory(
     history_messages_key="history",
 )
 
-if __name__ == "__main__":
-    SESSION_ID = "local-cli-session"
-    print("Chatbot ready. Type 'exit' or 'quit' to stop.")
-    while True:
-        user_input = input("You: ").strip()
-        if user_input.lower() in {"exit", "quit"}:
-            break
-        if not user_input:
-            continue
-        response = chatbot.invoke(
-            {"input": user_input},
-            config={"configurable": {"session_id": SESSION_ID}},
+
+def create_langfuse_tracing():
+    required_variables = ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY")
+    missing_variables = [
+        name for name in required_variables if not os.environ.get(name)
+    ]
+    if missing_variables:
+        missing = ", ".join(missing_variables)
+        raise SystemExit(
+            f"Missing required Langfuse environment variable(s): {missing}. "
+            "Set them in .env using the values from your Langfuse project."
         )
-        # ChatOllama returns an AIMessage; .content is just the text reply.
-        print(f"Bot: {response.content}")
+
+    from langfuse import get_client
+    from langfuse.langchain import CallbackHandler
+
+    return get_client(), CallbackHandler()
+
+
+def main() -> None:
+    session_id = uuid.uuid4().hex
+    langfuse, langfuse_handler = create_langfuse_tracing()
+    print("Chatbot ready. Type 'exit' or 'quit' to stop.")
+    try:
+        while True:
+            user_input = input("You: ").strip()
+            if user_input.lower() in {"exit", "quit"}:
+                break
+            if not user_input:
+                continue
+            response = chatbot.invoke(
+                {"input": user_input},
+                config={
+                    "callbacks": [langfuse_handler],
+                    "configurable": {"session_id": session_id},
+                    "metadata": {
+                        "langfuse_session_id": session_id,
+                        "langfuse_tags": ["ollama", "chatbot"],
+                    },
+                    "run_name": "chat-turn",
+                },
+            )
+            # ChatOllama returns an AIMessage; .content is just the text reply.
+            print(f"Bot: {response.content}")
+    finally:
+        langfuse.flush()
+
+
+if __name__ == "__main__":
+    main()
